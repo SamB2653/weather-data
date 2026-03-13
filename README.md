@@ -65,16 +65,20 @@ https://github.com/pwcazenave/pml-git/blob/master/python/osgb.py
 
 #### Example 1 - [en_to_lat_lon_osgb36]:
 AI Output:
+
 ![alt text](img/codeblock1_ai_output.png)
 
 Github Source:
+
 ![alt text](img/codeblock1_git_output.png)
 
 #### Example 2 - [en_to_lat_lon_osgb36]:
 AI Output:
+
 ![alt text](img/codeblock2_ai_output.png)
 
 Github Source:
+
 ![alt text](img/codeblock2_git_output.png)
 
 When a unique task is being solved using an LLM it is far more likely to generate blocks of code completely copied from training data. This can come from user inputs that the LLMs are trained on or other sources such as scraped github repositories.
