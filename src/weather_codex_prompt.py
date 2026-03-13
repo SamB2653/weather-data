@@ -28,22 +28,17 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-OS_PLACES_API_URL = "https://api.os.uk/search/places/v1/postcode"
+OS_NAMES_API_URL = "https://api.os.uk/search/names/v1/find"
 MET_OFFICE_DAILY_API_URL = (
     "https://data.hub.api.metoffice.gov.uk/sitespecific/v0/point/daily"
 )
 HTTP_TIMEOUT_SECONDS = 30
 
 OS_API_KEY_NAMES = (
-    "OS_API_KEY",
-    "OS_DATA_HUB_API_KEY",
-    "OS_DATAHUB_API_KEY",
     "OSD_API_KEY",
 )
 MET_OFFICE_API_KEY_NAMES = (
-    "MET_OFFICE_API_KEY",
     "METOFFICE_API_KEY",
-    "MET_API_KEY",
 )
 
 SIGNIFICANT_WEATHER_CODES = {
@@ -85,7 +80,7 @@ class WeatherForecastError(RuntimeError):
     """Raised when forecast retrieval fails."""
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class Coordinates:
     """WGS84 latitude/longitude coordinates."""
 
@@ -93,7 +88,7 @@ class Coordinates:
     longitude: float
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class PostcodeLocation:
     """Location details resolved from the postcode lookup."""
 
@@ -105,7 +100,7 @@ class PostcodeLocation:
     address: str | None = None
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class DailyForecast:
     """A single daily forecast entry."""
 
@@ -117,19 +112,29 @@ class DailyForecast:
 
 def load_dotenv(dotenv_path: str | Path = ".env") -> None:
     """Load environment variables from a local .env file if present."""
-    path = Path(dotenv_path)
-    if not path.is_file():
-        return
+    candidate_paths = [
+        Path(dotenv_path),
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parent / ".env",
+        Path(__file__).resolve().parent.parent / ".env",
+    ]
 
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    seen: set[Path] = set()
+    for path in candidate_paths:
+        resolved = path.resolve()
+        if resolved in seen or not resolved.is_file():
             continue
+        seen.add(resolved)
 
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+        for raw_line in resolved.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
 
 
 
@@ -180,12 +185,13 @@ def http_get_json(url: str, *, headers: dict[str, str], params: dict[str, Any]) 
 def lookup_postcode(postcode: str, os_api_key: str) -> PostcodeLocation:
     """Resolve a postcode to British National Grid and WGS84 coordinates."""
     payload = http_get_json(
-        OS_PLACES_API_URL,
-        headers={"key": os_api_key, "Accept": "application/json"},
+        OS_NAMES_API_URL,
+        headers={"Accept": "application/json"},
         params={
-            "postcode": postcode,
+            "query": postcode,
+            "fq": "LOCAL_TYPE:Postcode",
+            "key": os_api_key,
             "maxresults": 1,
-            "dataset": "DPA",
         },
     )
 
@@ -193,25 +199,25 @@ def lookup_postcode(postcode: str, os_api_key: str) -> PostcodeLocation:
     if not results:
         raise WeatherForecastError(f"No location data returned for postcode '{postcode}'.")
 
-    dpa = results[0].get("DPA") or {}
-    easting = dpa.get("X_COORDINATE")
-    northing = dpa.get("Y_COORDINATE")
+    gazetteer = results[0].get("GAZETTEER_ENTRY") or {}
+    easting = gazetteer.get("GEOMETRY_X")
+    northing = gazetteer.get("GEOMETRY_Y")
 
     if easting is None or northing is None:
-        raise WeatherForecastError("OS Places API response did not contain grid coordinates.")
+        raise WeatherForecastError("OS Names API response did not contain grid coordinates.")
 
     latitude, longitude = bng_to_wgs84(float(easting), float(northing))
 
     address_parts = [
-        dpa.get("BUILDING_NUMBER"),
-        dpa.get("THOROUGHFARE_NAME"),
-        dpa.get("POST_TOWN"),
-        dpa.get("POSTCODE"),
+        gazetteer.get("NAME1"),
+        gazetteer.get("POPULATED_PLACE"),
+        gazetteer.get("REGION"),
+        gazetteer.get("COUNTRY"),
     ]
     address = ", ".join(str(part) for part in address_parts if part not in (None, "")) or None
 
     return PostcodeLocation(
-        postcode=dpa.get("POSTCODE", postcode),
+        postcode=str(gazetteer.get("NAME1", postcode)),
         easting=float(easting),
         northing=float(northing),
         latitude=latitude,

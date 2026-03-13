@@ -13,6 +13,11 @@ try:
 except ImportError:
     load_dotenv = None
 
+OSD_URL = "https://api.os.uk/search/names/v1/find"
+MET_URL = "https://data.hub.api.metoffice.gov.uk/sitespecific/v0/point/daily"
+REQUEST_TIMEOUT_SECONDS = 10
+BNG_TO_WGS84 = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
+
 
 class WeatherError(Exception):
     """Raised for expected weather lookup failures."""
@@ -39,8 +44,9 @@ def load_environment() -> None:
             os.environ[key] = value
 
 
-def get_postcode_coordinates(api_key: str, postcode: str) -> dict[str, Any]:
-    url = "https://api.os.uk/search/names/v1/find"
+def get_postcode_coordinates(
+    session: requests.Session, api_key: str, postcode: str
+) -> dict[str, Any]:
     params = {
         "query": postcode,
         "fq": "LOCAL_TYPE:Postcode",
@@ -49,7 +55,7 @@ def get_postcode_coordinates(api_key: str, postcode: str) -> dict[str, Any]:
     }
 
     try:
-        response = requests.get(url, params=params, timeout=30)
+        response = session.get(OSD_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "unknown"
@@ -68,8 +74,7 @@ def get_postcode_coordinates(api_key: str, postcode: str) -> dict[str, Any]:
 
     entry = results[0].get("GAZETTEER_ENTRY", {})
     required_keys = ["NAME1", "GEOMETRY_X", "GEOMETRY_Y"]
-    missing = [key for key in required_keys if key not in entry]
-    if missing:
+    if any(key not in entry for key in required_keys):
         raise WeatherError("Location data is incomplete.")
 
     return {
@@ -89,18 +94,17 @@ def get_lat_long(x_coord: str | float, y_coord: str | float) -> dict[str, float]
     except (TypeError, ValueError) as exc:
         raise WeatherError("Invalid location coordinates.") from exc
 
-    transformer = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
-    longitude, latitude = transformer.transform(x_val, y_val)
+    longitude, latitude = BNG_TO_WGS84.transform(x_val, y_val)
     return {"latitude": latitude, "longitude": longitude}
 
 
 def get_daily_forecast(
+    session: requests.Session,
     api_key: str,
     latitude: float,
     longitude: float,
     field: str = "dayProbabilityOfRain",
 ) -> list[dict[str, Any]]:
-    url = "https://data.hub.api.metoffice.gov.uk/sitespecific/v0/point/daily"
     headers = {
         "apikey": api_key,
         "accept": "application/json",
@@ -111,11 +115,11 @@ def get_daily_forecast(
     }
 
     try:
-        response = requests.get(
-            url,
+        response = session.get(
+            MET_URL,
             headers=headers,
             params=params,
-            timeout=30,
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
     except requests.HTTPError as exc:
@@ -175,13 +179,15 @@ def main() -> int:
         return 1
 
     try:
-        result = get_postcode_coordinates(api_key_osd, postcode)
-        result_geography = get_lat_long(result["geometry_x"], result["geometry_y"])
-        forecast = get_daily_forecast(
-            api_key=api_key_met,
-            latitude=result_geography["latitude"],
-            longitude=result_geography["longitude"],
-        )
+        with requests.Session() as session:
+            result = get_postcode_coordinates(session, api_key_osd, postcode)
+            result_geography = get_lat_long(result["geometry_x"], result["geometry_y"])
+            forecast = get_daily_forecast(
+                session=session,
+                api_key=api_key_met,
+                latitude=result_geography["latitude"],
+                longitude=result_geography["longitude"],
+            )
     except WeatherError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
