@@ -137,3 +137,32 @@ The LLM regularly generates overly complex code for the solution, this code will
 | `weather.py`              |   4 |              0.853 |
 | `weather.py`              |   5 |              0.829 |
 
+# Timings: Profile
+
+Time difference due to weather.py using **requests** while weather_cpdex_prompt.py uses **urllib**.
+
+Script Profile: weather.py:
+
+```bash
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        2    0.314    0.157    0.314    0.157 {method 'load_verify_locations' of '_ssl._SSLContext' objects}
+        3    0.187    0.062    0.187    0.062 {method 'read' of '_ssl._SSLSocket' objects}
+        2    0.063    0.032    0.063    0.032 {method 'do_handshake' of '_ssl._SSLSocket' objects}
+        2    0.030    0.015    0.030    0.015 {method 'connect' of '_socket.socket' objects}
+```
+
+Script Profile: weather_codex_prompt.py:
+
+```bash
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        4    0.189    0.047    0.189    0.047 {method 'read' of '_ssl._SSLSocket' objects}
+        2    0.069    0.034    0.069    0.034 {method 'do_handshake' of '_ssl._SSLSocket' objects}
+        2    0.030    0.015    0.030    0.015 {method 'connect' of '_socket.socket' objects}
+        2    0.015    0.008    0.015    0.008 {method 'load_verify_locations' of '_ssl._SSLContext' objects}
+```
+
+Profile:
+
+```bash
+python -m cProfile -o profile.out weather_codex_prompt.py "DE74 2JB" && python -c "import pstats; p=pstats.Stats('profile.out'); p.strip_dirs().sort_stats('tottime').print_stats(50)"
+```
